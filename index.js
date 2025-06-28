@@ -203,8 +203,11 @@ app.post('/bitlabs-reward', async (req, res) => {
 });
 
 app.get('/bitlabs-offer', async (req, res) => {
-  const fullUrl = req.protocol + '://' + req.get('host') + req.originalUrl;
-  const [urlWithoutHash, receivedHash] = fullUrl.split('&hash=');
+  const fullUrl = req.originalUrl;
+const [pathAndQuery, receivedHash] = fullUrl.split('&hash=');
+const hmac = crypto.createHmac('sha1', BITLABS_SECRET);
+hmac.update(req.protocol + '://' + req.get('host') + pathAndQuery);
+const expectedHash = hmac.digest('hex');
   if (!urlWithoutHash || !receivedHash) return res.status(400).send('Missing hash');
 
   const hmac = crypto.createHmac('sha1', BITLABS_SECRET);
