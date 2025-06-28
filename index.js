@@ -6,8 +6,8 @@ const app = express();
 
 const PORT = process.env.PORT || 3000;
 const SECRET_KEY = process.env.SECRET_KEY;
-const CPX_SECRET = 'f3yNiOHf5oXpMCUpHpRr1kcGqQMpZVkk';
-const BITLABS_SECRET = 'Hx5PVawUJo58jubMKt0vPvUnrh0F7cXZ';
+const CPX_SECRET = process.env.CPX_SECRET;
+const BITLABS_SECRET = process.env.BITLABS_SECRET;
 const serviceAccount = JSON.parse(process.env.FIREBASE_CONFIG_JSON);
 
 // ✅ Firebase Init
