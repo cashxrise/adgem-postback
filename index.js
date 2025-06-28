@@ -16,6 +16,7 @@ admin.initializeApp({
 });
 const db = admin.firestore();
 
+// ✅ Parse JSON body
 app.use(bodyParser.json());
 
 // ✅ Health Check
@@ -32,7 +33,7 @@ app.get('/adgem', async (req, res) => {
 
   try {
     const txRef = db.collection('adgem_tx').doc(tx_id);
-    if ((await txRef.get()).exists) return res.send('Duplicate');
+    if ((await txRef.get()).exists) return res.status(200).send('Duplicate transaction - already credited');
 
     const userRef = db.collection('users').doc(user_id);
     if (!(await userRef.get()).exists) return res.status(404).send('User not found');
@@ -44,26 +45,26 @@ app.get('/adgem', async (req, res) => {
       });
     });
 
-    res.send('✅ AdGem: Coins updated');
+    return res.send('✅ AdGem: Coins updated successfully');
   } catch (err) {
-    console.error(err);
-    res.status(500).send('Server error');
+    console.error('AdGem error:', err);
+    return res.status(500).send('Server error');
   }
 });
 
-// ✅ CPX Postback
+// ✅ CPX Postbacks
 app.get('/cpx', async (req, res) => {
   const { status, trans_id, user_id, amount_local, hash } = req.query;
 
-  if (status !== '1') return res.status(200).send('Ignored');
-  if (!user_id || !amount_local || !trans_id || !hash) return res.status(400).send('Missing');
+  if (status !== '1' || !user_id || !amount_local || !trans_id || !hash)
+    return res.status(400).send('Missing or invalid parameters');
 
   const expectedHash = crypto.createHash('md5').update(`${trans_id}-${CPX_SECRET}`).digest('hex');
   if (hash !== expectedHash) return res.status(403).send('Invalid hash');
 
   try {
     const txRef = db.collection('cpx_tx').doc(trans_id);
-    if ((await txRef.get()).exists) return res.send('Duplicate');
+    if ((await txRef.get()).exists) return res.status(200).send('Duplicate transaction - already credited');
 
     const userRef = db.collection('users').doc(user_id);
     if (!(await userRef.get()).exists) return res.status(404).send('User not found');
@@ -75,14 +76,74 @@ app.get('/cpx', async (req, res) => {
       });
     });
 
-    res.send('✅ CPX: Coins updated');
+    return res.send('✅ CPX: Coins updated successfully');
   } catch (err) {
-    console.error(err);
-    res.status(500).send('Server error');
+    console.error('CPX error:', err);
+    return res.status(500).send('Server error');
   }
 });
 
-// ✅ BitLabs GET Callback (reward via hash)
+app.get('/cpx-screenout', async (req, res) => {
+  const { trans_id, user_id, amount_local, hash } = req.query;
+
+  if (!user_id || !amount_local || !trans_id || !hash)
+    return res.status(400).send('Missing parameters');
+
+  const expectedHash = crypto.createHash('md5').update(`${trans_id}-${CPX_SECRET}`).digest('hex');
+  if (hash !== expectedHash) return res.status(403).send('Invalid hash');
+
+  try {
+    const userRef = db.collection('users').doc(user_id);
+    if (!(await userRef.get()).exists) return res.status(404).send('User not found');
+
+    await userRef.update({
+      coins: admin.firestore.FieldValue.increment(parseInt(amount_local)),
+    });
+
+    return res.send('✅ CPX: Screenout bonus credited');
+  } catch (err) {
+    console.error('Screenout error:', err);
+    return res.status(500).send('Server error');
+  }
+});
+
+app.get('/cpx-bonus', async (req, res) => {
+  const { trans_id, user_id, amount_local, hash } = req.query;
+
+  if (!user_id || !amount_local || !trans_id || !hash)
+    return res.status(400).send('Missing parameters');
+
+  const expectedHash = crypto.createHash('md5').update(`${trans_id}-${CPX_SECRET}`).digest('hex');
+  if (hash !== expectedHash) return res.status(403).send('Invalid hash');
+
+  try {
+    const userRef = db.collection('users').doc(user_id);
+    if (!(await userRef.get()).exists) return res.status(404).send('User not found');
+
+    await userRef.update({
+      coins: admin.firestore.FieldValue.increment(parseInt(amount_local)),
+    });
+
+    return res.send('✅ CPX: Bonus/Rating credited');
+  } catch (err) {
+    console.error('Bonus error:', err);
+    return res.status(500).send('Server error');
+  }
+});
+
+app.get('/cpx-cancel', async (req, res) => {
+  const { trans_id, hash } = req.query;
+
+  if (!trans_id || !hash) return res.status(400).send('Missing parameters');
+
+  const expectedHash = crypto.createHash('md5').update(`${trans_id}-${CPX_SECRET}`).digest('hex');
+  if (hash !== expectedHash) return res.status(403).send('Invalid hash');
+
+  console.warn(`❌ CPX: Fraudulent/canceled transaction detected: ${trans_id}`);
+  return res.send('✅ CPX: Fraud/cancel callback logged');
+});
+
+// ✅ BitLabs: GET Reward
 app.get('/bitlabs-reward', async (req, res) => {
   const { uid, val, tx, hash } = req.query;
 
@@ -99,7 +160,7 @@ app.get('/bitlabs-reward', async (req, res) => {
     if (!(await userRef.get()).exists) return res.status(404).send('User not found');
 
     await db.runTransaction(async (t) => {
-      t.set(txRef, { uid, val: parseInt(val), tx, createdAt: new Date() });
+      t.set(txRef, { uid, val: parseInt(val), tx, type: 'survey', createdAt: new Date() });
       t.update(userRef, {
         coins: admin.firestore.FieldValue.increment(parseInt(val)),
       });
@@ -107,12 +168,12 @@ app.get('/bitlabs-reward', async (req, res) => {
 
     res.send('✅ BitLabs: GET reward credited');
   } catch (err) {
-    console.error(err);
+    console.error('BitLabs GET error:', err);
     res.status(500).send('Server error');
   }
 });
 
-// ✅ BitLabs POST Reward via body + hash (no signature)
+// ✅ BitLabs: POST Reward
 app.post('/bitlabs-reward', async (req, res) => {
   const { uid, val, tx, hash } = req.body;
 
@@ -129,7 +190,7 @@ app.post('/bitlabs-reward', async (req, res) => {
     if (!(await userRef.get()).exists) return res.status(404).send('User not found');
 
     await db.runTransaction(async (t) => {
-      t.set(txRef, { uid, val: parseInt(val), tx, createdAt: new Date() });
+      t.set(txRef, { uid, val: parseInt(val), tx, type: 'survey', createdAt: new Date() });
       t.update(userRef, {
         coins: admin.firestore.FieldValue.increment(parseInt(val)),
       });
@@ -137,12 +198,12 @@ app.post('/bitlabs-reward', async (req, res) => {
 
     res.send('✅ BitLabs: POST reward credited');
   } catch (err) {
-    console.error(err);
+    console.error('BitLabs POST error:', err);
     res.status(500).send('Server error');
   }
 });
 
-// ✅ BitLabs Offer Callback (if separate)
+// ✅ BitLabs: POST Offer Callback
 app.post('/bitlabs-offer', async (req, res) => {
   const { uid, val, tx, hash } = req.body;
 
@@ -165,13 +226,14 @@ app.post('/bitlabs-offer', async (req, res) => {
       });
     });
 
-    res.send('✅ BitLabs: POST offer credited');
+    res.send('✅ BitLabs: Offer reward credited');
   } catch (err) {
-    console.error(err);
+    console.error('BitLabs Offer error:', err);
     res.status(500).send('Server error');
   }
 });
 
+// ✅ Start Server
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
