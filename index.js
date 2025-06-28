@@ -133,23 +133,34 @@ app.get('/cpx-bonus', async (req, res) => {
 
 // ✅ BitLabs GET with HMAC-SHA1 hash check
 app.get('/bitlabs-reward', async (req, res) => {
-  const fullUrl = req.protocol + '://' + req.get('host') + req.originalUrl;
-  const [urlWithoutHash, receivedHash] = fullUrl.split('&hash=');
+  const { uid, val, tx, hash } = req.query;
+
+  if (!uid || !val || !tx || !hash) return res.status(400).send('Missing parameters');
+
+  // ✅ Reconstruct query string in the exact same order used by BitLabs
+  const rawQuery = `uid=${uid}&val=${val}&tx=${tx}`;
+  const baseUrl = req.protocol + '://' + req.get('host') + req.path;
+  const urlForHash = `${baseUrl}?${rawQuery}`;
+
+  // ✅ Generate expected hash
   const hmac = crypto.createHmac('sha1', BITLABS_SECRET);
-  hmac.update(urlWithoutHash);
+  hmac.update(urlForHash);
   const expectedHash = hmac.digest('hex');
-  if (receivedHash !== expectedHash) return res.status(403).send('Invalid hash');
-  const { uid, val, tx } = req.query;
-  if (!uid || !val || !tx) return res.status(400).send('Missing parameters');
+
+  if (hash !== expectedHash) return res.status(403).send('Invalid hash');
+
   try {
     const txRef = db.collection('bitlabs_tx').doc(tx);
     if ((await txRef.get()).exists) return res.send('Duplicate');
+
     const userRef = db.collection('users').doc(uid);
     if (!(await userRef.get()).exists) return res.status(404).send('User not found');
+
     await db.runTransaction(t => {
       t.set(txRef, { uid, val: parseInt(val), tx, type: 'survey', createdAt: new Date() });
       t.update(userRef, { coins: admin.firestore.FieldValue.increment(parseInt(val)) });
     });
+
     res.send('✅ BitLabs: GET reward credited');
   } catch (err) {
     console.error('BitLabs GET error:', err);
