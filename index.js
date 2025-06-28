@@ -171,6 +171,7 @@ app.get('/bitlabs-offer', async (req, res) => {
     console.log('❌ BitLabs OFFER hash mismatch');
     console.log('Expected:', expectedHash);
     console.log('Received:', receivedHash);
+    console.log('String used for HMAC:', urlWithoutHash);
     return res.status(403).send('Invalid hash');
   }
 
