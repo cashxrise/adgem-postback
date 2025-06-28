@@ -131,41 +131,25 @@ app.get('/cpx-bonus', async (req, res) => {
   }
 });
 
-app.get('/cpx-cancel', async (req, res) => {
-  const { trans_id, hash } = req.query;
-
-  if (!trans_id || !hash) return res.status(400).send('Missing parameters');
-
-  const expectedHash = crypto.createHash('md5').update(`${trans_id}-${CPX_SECRET}`).digest('hex');
-  if (hash !== expectedHash) return res.status(403).send('Invalid hash');
-
-  console.warn(`❌ CPX: Fraudulent/canceled transaction detected: ${trans_id}`);
-  return res.send('✅ CPX: Fraud/cancel callback logged');
-});
-
-// ✅ BitLabs: GET Reward
+// ✅ BitLabs GET with HMAC-SHA1 hash check
 app.get('/bitlabs-reward', async (req, res) => {
-  const { uid, val, tx, hash } = req.query;
-
-  if (!uid || !val || !tx || !hash) return res.status(400).send('Missing');
-
-  const expectedHash = crypto.createHash('sha256').update(uid + val + tx + BITLABS_SECRET).digest('hex');
-  if (hash !== expectedHash) return res.status(403).send('Invalid hash');
-
+  const fullUrl = req.protocol + '://' + req.get('host') + req.originalUrl;
+  const [urlWithoutHash, receivedHash] = fullUrl.split('&hash=');
+  const hmac = crypto.createHmac('sha1', BITLABS_SECRET);
+  hmac.update(urlWithoutHash);
+  const expectedHash = hmac.digest('hex');
+  if (receivedHash !== expectedHash) return res.status(403).send('Invalid hash');
+  const { uid, val, tx } = req.query;
+  if (!uid || !val || !tx) return res.status(400).send('Missing parameters');
   try {
     const txRef = db.collection('bitlabs_tx').doc(tx);
     if ((await txRef.get()).exists) return res.send('Duplicate');
-
     const userRef = db.collection('users').doc(uid);
     if (!(await userRef.get()).exists) return res.status(404).send('User not found');
-
-    await db.runTransaction(async (t) => {
+    await db.runTransaction(t => {
       t.set(txRef, { uid, val: parseInt(val), tx, type: 'survey', createdAt: new Date() });
-      t.update(userRef, {
-        coins: admin.firestore.FieldValue.increment(parseInt(val)),
-      });
+      t.update(userRef, { coins: admin.firestore.FieldValue.increment(parseInt(val)) });
     });
-
     res.send('✅ BitLabs: GET reward credited');
   } catch (err) {
     console.error('BitLabs GET error:', err);
@@ -173,29 +157,28 @@ app.get('/bitlabs-reward', async (req, res) => {
   }
 });
 
-// ✅ BitLabs: POST Reward
+// ✅ BitLabs POST (reward & offer)
+const validatePostHash = ({ uid, val, tx, hash }) => {
+  const urlString = `uid=${uid}&val=${val}&tx=${tx}`;
+  const hmac = crypto.createHmac('sha1', BITLABS_SECRET);
+  hmac.update(urlString);
+  const expectedHash = hmac.digest('hex');
+  return hash === expectedHash;
+};
+
 app.post('/bitlabs-reward', async (req, res) => {
   const { uid, val, tx, hash } = req.body;
-
   if (!uid || !val || !tx || !hash) return res.status(400).send('Missing');
-
-  const expectedHash = crypto.createHash('sha256').update(uid + val + tx + BITLABS_SECRET).digest('hex');
-  if (hash !== expectedHash) return res.status(403).send('Invalid hash');
-
+  if (!validatePostHash(req.body)) return res.status(403).send('Invalid hash');
   try {
     const txRef = db.collection('bitlabs_tx').doc(tx);
     if ((await txRef.get()).exists) return res.send('Duplicate');
-
     const userRef = db.collection('users').doc(uid);
     if (!(await userRef.get()).exists) return res.status(404).send('User not found');
-
-    await db.runTransaction(async (t) => {
+    await db.runTransaction(t => {
       t.set(txRef, { uid, val: parseInt(val), tx, type: 'survey', createdAt: new Date() });
-      t.update(userRef, {
-        coins: admin.firestore.FieldValue.increment(parseInt(val)),
-      });
+      t.update(userRef, { coins: admin.firestore.FieldValue.increment(parseInt(val)) });
     });
-
     res.send('✅ BitLabs: POST reward credited');
   } catch (err) {
     console.error('BitLabs POST error:', err);
@@ -203,29 +186,19 @@ app.post('/bitlabs-reward', async (req, res) => {
   }
 });
 
-// ✅ BitLabs: POST Offer Callback
 app.post('/bitlabs-offer', async (req, res) => {
   const { uid, val, tx, hash } = req.body;
-
   if (!uid || !val || !tx || !hash) return res.status(400).send('Missing');
-
-  const expectedHash = crypto.createHash('sha256').update(uid + val + tx + BITLABS_SECRET).digest('hex');
-  if (hash !== expectedHash) return res.status(403).send('Invalid hash');
-
+  if (!validatePostHash(req.body)) return res.status(403).send('Invalid hash');
   try {
     const txRef = db.collection('bitlabs_tx').doc(tx);
     if ((await txRef.get()).exists) return res.send('Duplicate');
-
     const userRef = db.collection('users').doc(uid);
     if (!(await userRef.get()).exists) return res.status(404).send('User not found');
-
-    await db.runTransaction(async (t) => {
+    await db.runTransaction(t => {
       t.set(txRef, { uid, val: parseInt(val), tx, type: 'offer', createdAt: new Date() });
-      t.update(userRef, {
-        coins: admin.firestore.FieldValue.increment(parseInt(val)),
-      });
+      t.update(userRef, { coins: admin.firestore.FieldValue.increment(parseInt(val)) });
     });
-
     res.send('✅ BitLabs: Offer reward credited');
   } catch (err) {
     console.error('BitLabs Offer error:', err);
@@ -233,7 +206,5 @@ app.post('/bitlabs-offer', async (req, res) => {
   }
 });
 
-// ✅ Start Server
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
