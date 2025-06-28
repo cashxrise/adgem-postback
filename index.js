@@ -134,19 +134,22 @@ app.get('/cpx-bonus', async (req, res) => {
 // ✅ BitLabs GET with HMAC-SHA1 hash check
 app.get('/bitlabs-reward', async (req, res) => {
   const fullUrl = req.protocol + '://' + req.get('host') + req.originalUrl;
-
   const [urlWithoutHash, receivedHash] = fullUrl.split('&hash=');
+
+  // Generate expected hash using full URL without &hash=
   const hmac = crypto.createHmac('sha1', BITLABS_SECRET);
-  hmac.update(urlWithoutHash); // includes raw=1, debug=true, etc.
+  hmac.update(urlWithoutHash);
   const expectedHash = hmac.digest('hex');
 
+  // Compare hash
   if (receivedHash !== expectedHash) {
-    console.log('🔒 Hash mismatch');
+    console.log('❌ Hash mismatch');
     console.log('Expected:', expectedHash);
     console.log('Received:', receivedHash);
     return res.status(403).send('Invalid hash');
   }
 
+  // Parse essential query params
   const { uid, val, tx } = req.query;
   if (!uid || !val || !tx) return res.status(400).send('Missing parameters');
 
@@ -161,6 +164,14 @@ app.get('/bitlabs-reward', async (req, res) => {
       t.set(txRef, { uid, val: parseInt(val), tx, type: 'survey', createdAt: new Date() });
       t.update(userRef, { coins: admin.firestore.FieldValue.increment(parseInt(val)) });
     });
+
+    res.send('✅ BitLabs: GET reward credited');
+  } catch (err) {
+    console.error('🔥 BitLabs GET error:', err);
+    res.status(500).send('Server error');
+  }
+});
+
 
     res.send('✅ BitLabs: GET reward credited');
   } catch (err) {
