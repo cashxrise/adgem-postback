@@ -1,4 +1,4 @@
-const express = require('express');
+const express = require('express'); 
 const admin = require('firebase-admin');
 const crypto = require('crypto');
 const bodyParser = require('body-parser');
@@ -8,6 +8,7 @@ const PORT = process.env.PORT || 3000;
 const SECRET_KEY = process.env.SECRET_KEY;
 const CPX_SECRET = process.env.CPX_SECRET;
 const BITLABS_SECRET = process.env.BITLABS_SECRET;
+const THEOREMREACH_SECRET = process.env.THEOREMREACH_SECRET;
 const serviceAccount = JSON.parse(process.env.FIREBASE_CONFIG_JSON);
 
 // ✅ Firebase Init
@@ -31,7 +32,6 @@ const handleBitlabsCallback = async (req, res) => {
     if (!uid || !val || !tx || !raw || !hash)
       return res.status(400).send('❌ Missing required parameters');
 
-    // Rebuild full URL used for hashing (excluding &hash)
     const baseUrl = `https://${req.get('host')}${req.path}`;
     const queryParams = new URLSearchParams({ uid, val, tx, raw });
     if (debug !== undefined) queryParams.append('debug', debug);
@@ -200,6 +200,79 @@ app.get('/cpx-bonus', async (req, res) => {
   } catch (err) {
     console.error('Bonus error:', err);
     return res.status(500).send('Server error');
+  }
+});
+
+// ✅ TheoremReach Callback Handler
+function generateTheoremReachHash(url, secret) {
+  const raw = crypto.createHmac("sha1", secret).update(url, "utf8").digest();
+  return Buffer.from(raw)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+app.get('/theoremreach/callback', async (req, res) => {
+  try {
+    const { user_id, reward, tx_id, hash } = req.query;
+
+    if (!user_id || !reward || !tx_id || !hash) {
+      return res.status(400).send("❌ Missing required parameters");
+    }
+
+    const baseUrl = `https://${req.get("host")}${req.path}`;
+    const fullUrl =
+      `${baseUrl}?` +
+      Object.entries(req.query)
+        .filter(([key]) => key !== "hash")
+        .map(([key, val]) => `${key}=${val}`)
+        .join("&");
+
+    const expectedHash = generateTheoremReachHash(fullUrl, THEOREMREACH_SECRET);
+
+    console.log("🔍 Full URL:", fullUrl);
+    console.log("🔐 Expected Hash:", expectedHash);
+    console.log("🧾 Received Hash:", hash);
+
+    if (hash !== expectedHash) {
+      return res.status(403).send("❌ Invalid signature");
+    }
+
+    const txRef = db.collection("theoremreach_transactions").doc(tx_id);
+    if ((await txRef.get()).exists) {
+      return res.status(200).send("Already rewarded");
+    }
+
+    const userRef = db.collection("users").doc(user_id);
+    const userSnap = await userRef.get();
+    if (!userSnap.exists) {
+      return res.status(404).send("User not found");
+    }
+
+    const rewardAmount = parseInt(reward);
+    if (isNaN(rewardAmount) || rewardAmount <= 0) {
+      return res.status(400).send("❌ Invalid reward amount");
+    }
+
+    await db.runTransaction(async (t) => {
+      t.set(txRef, {
+        user_id,
+        reward: rewardAmount,
+        tx_id,
+        createdAt: new Date(),
+      });
+
+      t.update(userRef, {
+        coins: admin.firestore.FieldValue.increment(rewardAmount),
+      });
+    });
+
+    console.log(`✅ ${rewardAmount} coins rewarded to ${user_id}`);
+    return res.send("✅ TheoremReach: Coins updated successfully");
+  } catch (err) {
+    console.error("🔥 TheoremReach callback error:", err);
+    return res.status(500).send("Server error");
   }
 });
 
