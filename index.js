@@ -1,4 +1,4 @@
-const express = require('express'); 
+const express = require('express');  
 const admin = require('firebase-admin');
 const crypto = require('crypto');
 const bodyParser = require('body-parser');
@@ -9,6 +9,7 @@ const SECRET_KEY = process.env.SECRET_KEY;
 const CPX_SECRET = process.env.CPX_SECRET;
 const BITLABS_SECRET = process.env.BITLABS_SECRET;
 const THEOREMREACH_SECRET = process.env.THEOREMREACH_SECRET;
+const AYET_API_KEY = process.env.AYET_API_KEY;
 const serviceAccount = JSON.parse(process.env.FIREBASE_CONFIG_JSON);
 
 // ✅ Firebase Init
@@ -272,6 +273,78 @@ app.get('/theoremreach/callback', async (req, res) => {
     return res.send("✅ TheoremReach: Coins updated successfully");
   } catch (err) {
     console.error("🔥 TheoremReach callback error:", err);
+    return res.status(500).send("Server error");
+  }
+});
+
+// ✅ Ayet Studios Callback Handler
+app.get("/ayet/callback", async (req, res) => {
+  try {
+    const ayetHash = req.get("X-Ayetstudios-Security-Hash");
+
+    if (!ayetHash) return res.status(403).send("❌ Missing HMAC header");
+
+    // 🔁 URL-encode all values
+    const encodedParams = {};
+    Object.entries(req.query).forEach(([key, value]) => {
+      encodedParams[key] = encodeURIComponent(value);
+    });
+
+    // 🔤 Sort keys alphabetically
+    const sortedKeys = Object.keys(encodedParams).sort();
+    const sortedQueryString = sortedKeys
+      .map((key) => `${key}=${encodedParams[key]}`)
+      .join("&");
+
+    // 🔐 Generate HMAC-SHA256 hash
+    const computedHash = crypto
+      .createHmac("sha256", AYET_API_KEY)
+      .update(sortedQueryString)
+      .digest("hex");
+
+    console.log("🔍 Sorted Query:", sortedQueryString);
+    console.log("🧮 Computed Hash:", computedHash);
+    console.log("📩 Received Hash:", ayetHash);
+
+    if (computedHash !== ayetHash) {
+      return res.status(403).send("❌ Invalid HMAC Signature");
+    }
+
+    // ✅ Extract parameters
+    const { transaction_id, amount, user_id } = req.query;
+    if (!transaction_id || !amount || !user_id) {
+      return res.status(400).send("❌ Missing required parameters");
+    }
+
+    // ✅ Check if transaction already exists
+    const txRef = db.collection("ayet_transactions").doc(transaction_id);
+    if ((await txRef.get()).exists) {
+      return res.status(200).send("⚠️ Duplicate transaction");
+    }
+
+    // ✅ Check if user exists
+    const userRef = db.collection("users").doc(user_id);
+    if (!(await userRef.get()).exists) {
+      return res.status(404).send("❌ User not found");
+    }
+
+    // ✅ Reward user and store transaction
+    await db.runTransaction(async (t) => {
+      t.set(txRef, {
+        transaction_id,
+        user_id,
+        amount: parseInt(amount),
+        createdAt: new Date(),
+      });
+      t.update(userRef, {
+        coins: admin.firestore.FieldValue.increment(parseInt(amount)),
+      });
+    });
+
+    console.log(`✅ Ayet: ${amount} coins rewarded to ${user_id}`);
+    return res.send("✅ Ayet: Coins rewarded");
+  } catch (err) {
+    console.error("🔥 Error handling Ayet callback:", err);
     return res.status(500).send("Server error");
   }
 });
