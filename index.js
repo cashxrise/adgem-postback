@@ -64,6 +64,7 @@ const handleBitlabsCallback = async (req, res) => {
       t.set(txRef, { uid, val: rewardAmount, raw, createdAt: new Date() });
       t.update(userRef, {
         coins: admin.firestore.FieldValue.increment(rewardAmount),
+        tasksCompleted: admin.firestore.FieldValue.increment(1),
       });
     });
 
@@ -100,6 +101,7 @@ app.get('/adgem', async (req, res) => {
       t.set(txRef, { user_id, amount: parseInt(amount), createdAt: new Date() });
       t.update(userRef, {
         coins: admin.firestore.FieldValue.increment(parseInt(amount)),
+        tasksCompleted: admin.firestore.FieldValue.increment(1),
       });
     });
 
@@ -136,6 +138,7 @@ app.get('/cpx', async (req, res) => {
       t.set(txRef, { user_id, amount: parseInt(amount_local), createdAt: new Date() });
       t.update(userRef, {
         coins: admin.firestore.FieldValue.increment(parseInt(amount_local)),
+        tasksCompleted: admin.firestore.FieldValue.increment(1),
       });
     });
 
@@ -266,6 +269,7 @@ app.get('/theoremreach/callback', async (req, res) => {
 
       t.update(userRef, {
         coins: admin.firestore.FieldValue.increment(rewardAmount),
+        tasksCompleted: admin.firestore.FieldValue.increment(1),
       });
     });
 
@@ -338,6 +342,7 @@ app.get("/ayet/callback", async (req, res) => {
       });
       t.update(userRef, {
         coins: admin.firestore.FieldValue.increment(parseInt(amount)),
+        tasksCompleted: admin.firestore.FieldValue.increment(1),
       });
     });
 
